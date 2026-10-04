@@ -1,0 +1,102 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+# =========================
+# USER SETTINGS
+# =========================
+
+S0 = 85          # Starting price
+mu = 0.15         # Expected annual return
+sigma = 0.5      # Annual volatility
+T = 1.0           # Time horizon in years
+steps = 365        # Trading days per year
+
+target = 150      # <-- CUSTOM TARGET PRICE
+simulations = 1_000_000
+
+# =========================
+# MONTE CARLO SIMULATION
+# =========================
+
+dt = T / steps
+time = np.linspace(0, T, steps + 1)
+
+# Store prices
+prices = np.zeros((steps + 1, simulations))
+prices[0] = S0
+
+for t in range(1, steps + 1):
+
+    # Random normal shocks
+    Z = np.random.normal(0, 1, simulations)
+
+    # GBM equation
+    prices[t] = prices[t - 1] * np.exp(
+        (mu - 0.5 * sigma**2) * dt
+        + sigma * np.sqrt(dt) * Z
+    )
+
+# =========================
+# CHECK WHETHER TARGET WAS HIT
+# =========================
+
+# For every simulation, check if price ever reached target
+hit_target = np.max(prices, axis=0) >= target
+
+# Number of simulations that hit target
+successful_paths = np.sum(hit_target)
+
+# Monte Carlo probability
+probability = successful_paths / simulations
+
+# =========================
+# RESULTS
+# =========================
+
+print("--------------------------------")
+print("MONTE CARLO RESULTS")
+print("--------------------------------")
+print(f"Starting price:       ${S0:,.2f}")
+print(f"Target price:         ${target:,.2f}")
+print(f"Expected return:      {mu * 100:.2f}%")
+print(f"Volatility:           {sigma * 100:.2f}%")
+print(f"Time horizon:         {T:.2f} years")
+print(f"Simulations:          {simulations:,}")
+print("--------------------------------")
+print(f"Paths hitting target: {successful_paths:,}")
+print(f"Probability of hit:   {probability * 100:.2f}%")
+print("--------------------------------")
+
+# =========================
+# PLOT SAMPLE PATHS
+# =========================
+
+plt.figure(figsize=(10, 6))
+
+# Only plot first 100 paths so the graph isn't overloaded
+for i in range(min(100, simulations)):
+    plt.plot(time, prices[:, i], linewidth=0.7)
+
+# Target line
+plt.axhline(
+    target,
+    linestyle="--",
+    linewidth=2,
+    label=f"Target = ${target:,.0f}"
+)
+
+# Starting price
+plt.axhline(
+    S0,
+    linestyle=":",
+    linewidth=1,
+    label=f"Starting price = ${S0:,.0f}"
+)
+
+plt.title("Monte Carlo GBM Simulation")
+plt.xlabel("Time (years)")
+plt.ylabel("Price")
+plt.legend()
+plt.grid(alpha=0.3)
+
+plt.show()

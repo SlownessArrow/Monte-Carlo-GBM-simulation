@@ -1,53 +1,91 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from math import log, sqrt, exp, erf
 
 # =========================
 # USER SETTINGS
 # =========================
 
-S0 = 85          # Starting price
-mu = 0.15         # Expected annual return
-sigma = 0.5      # Annual volatility
-T = 1.0           # Time horizon in years
-steps = 365        # Trading days per year
+S0 = 85              # Starting price
+mu = 0.15            # Expected annual return (real-world drift, a guess)
+sigma = 0.5          # Annual volatility (assumed constant)
+T = 1.0              # Time horizon in years
+steps = 365          # Time steps per year (365 = calendar days (crypto); use 252 for trading days (stock market))
 
-target = 150      # <-- CUSTOM TARGET PRICE
+target = 150          # <-- CUSTOM TARGET PRICE (can be above OR below S0)
 simulations = 1_000_000
+n_plot = 100         # Number of sample paths to draw
+seed = None          # Set an int for reproducible runs
+
+assert target > 0, "GBM can never reach 0 or negative prices"
 
 # =========================
 # MONTE CARLO SIMULATION
 # =========================
 
+rng = np.random.default_rng(seed)
 dt = T / steps
 time = np.linspace(0, T, steps + 1)
+drift = (mu - 0.5 * sigma**2) * dt
+vol = sigma * np.sqrt(dt)
 
-# Store prices
-prices = np.zeros((steps + 1, simulations))
-prices[0] = S0
+S = np.full(simulations, S0, dtype=np.float64)
+running_max = S.copy()
+running_min = S.copy()
+
+plot_paths = np.empty((steps + 1, n_plot))
+plot_paths[0] = S0
 
 for t in range(1, steps + 1):
-
-    # Random normal shocks
-    Z = np.random.normal(0, 1, simulations)
-
-    # GBM equation
-    prices[t] = prices[t - 1] * np.exp(
-        (mu - 0.5 * sigma**2) * dt
-        + sigma * np.sqrt(dt) * Z
-    )
+    Z = rng.standard_normal(simulations)
+    S *= np.exp(drift + vol * Z)
+    np.maximum(running_max, S, out=running_max)
+    np.minimum(running_min, S, out=running_min)
+    plot_paths[t] = S[:n_plot]
 
 # =========================
 # CHECK WHETHER TARGET WAS HIT
 # =========================
+# The direction matters:
+#   target above start -> did the path ever go UP to the target? (max >= target)
+#   target below start -> did the path ever go DOWN to the target? (min <= target)
 
-# For every simulation, check if price ever reached target
-hit_target = np.max(prices, axis=0) >= target
+if target > S0:
+    direction = "up"
+    hit_target = running_max >= target
+elif target < S0:
+    direction = "down"
+    hit_target = running_min <= target
+else:
+    direction = "none"
+    hit_target = np.ones(simulations, dtype=bool)  # already at target
 
-# Number of simulations that hit target
-successful_paths = np.sum(hit_target)
-
-# Monte Carlo probability
+successful_paths = int(np.sum(hit_target))
 probability = successful_paths / simulations
+std_err = sqrt(probability * (1 - probability) / simulations)
+
+# =========================
+# ANALYTIC SANITY CHECK
+# =========================
+# Closed-form probability that GBM touches a barrier within T,
+# assuming CONTINUOUS monitoring. The simulation checks only at discrete
+# steps, so it should come out slightly lower than this.
+
+def norm_cdf(x):
+    return 0.5 * (1 + erf(x / sqrt(2)))
+
+def touch_probability(S0, target, mu, sigma, T):
+    if target == S0:
+        return 1.0
+    nu = mu - 0.5 * sigma**2
+    b = log(target / S0)
+    s = sigma * sqrt(T)
+    if b > 0:  # barrier above
+        return norm_cdf((-b + nu * T) / s) + exp(2 * nu * b / sigma**2) * norm_cdf((-b - nu * T) / s)
+    else:      # barrier below
+        return norm_cdf((b - nu * T) / s) + exp(2 * nu * b / sigma**2) * norm_cdf((b + nu * T) / s)
+
+analytic = touch_probability(S0, target, mu, sigma, T)
 
 # =========================
 # RESULTS
@@ -57,14 +95,15 @@ print("--------------------------------")
 print("MONTE CARLO RESULTS")
 print("--------------------------------")
 print(f"Starting price:       ${S0:,.2f}")
-print(f"Target price:         ${target:,.2f}")
+print(f"Target price:         ${target:,.2f} ({direction})")
 print(f"Expected return:      {mu * 100:.2f}%")
 print(f"Volatility:           {sigma * 100:.2f}%")
 print(f"Time horizon:         {T:.2f} years")
 print(f"Simulations:          {simulations:,}")
 print("--------------------------------")
 print(f"Paths hitting target: {successful_paths:,}")
-print(f"Probability of hit:   {probability * 100:.2f}%")
+print(f"Probability of hit:   {probability * 100:.2f}%  (+/- {1.96 * std_err * 100:.2f}% at 95%)")
+print(f"Analytic (continuous):{analytic * 100:.2f}%")
 print("--------------------------------")
 
 # =========================
@@ -73,25 +112,13 @@ print("--------------------------------")
 
 plt.figure(figsize=(10, 6))
 
-# Only plot first 100 paths so the graph isn't overloaded
-for i in range(min(100, simulations)):
-    plt.plot(time, prices[:, i], linewidth=0.7)
+for i in range(n_plot):
+    plt.plot(time, plot_paths[:, i], linewidth=0.7)
 
-# Target line
-plt.axhline(
-    target,
-    linestyle="--",
-    linewidth=2,
-    label=f"Target = ${target:,.0f}"
-)
-
-# Starting price
-plt.axhline(
-    S0,
-    linestyle=":",
-    linewidth=1,
-    label=f"Starting price = ${S0:,.0f}"
-)
+plt.axhline(target, linestyle="--", linewidth=2, color="red",
+            label=f"Target = ${target:,.0f}")
+plt.axhline(S0, linestyle=":", linewidth=1, color="black",
+            label=f"Starting price = ${S0:,.0f}")
 
 plt.title("Monte Carlo GBM Simulation")
 plt.xlabel("Time (years)")
